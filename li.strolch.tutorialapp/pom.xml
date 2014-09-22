@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>li.strolch</groupId>
 		<artifactId>li.strolch.parent</artifactId>
-		<version>1.0.0-RC1</version>
+		<version>1.0.0-RC2</version>
 		<relativePath>../li.strolch.parent/pom.xml</relativePath>
 	</parent>
 
@@ -65,6 +65,13 @@
 				<includes>
 					<include>**/componentVersion.properties</include>
 				</includes>
+			</resource>
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>false</filtering>
+				<excludes>
+					<exclude>**/componentVersion.properties</exclude>
+				</excludes>
 			</resource>
 		</resources>
 		<plugins>

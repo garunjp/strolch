@@ -5,6 +5,11 @@ if [ "$#" != "2" ] ; then
     exit 1
 fi
 
+if [ ! $(which xmlstarlet) ] ; then
+  echo "ERROR: xmlstarlet is missing!"
+  exit 1
+fi
+
 #if ! mvn -f pom.xml versions:set -DnewVersion="${1}" -DallowSnapshots=true -DgenerateBackupPoms=false ; then
 #    echo "ERROR: Failed to change version in root!"
 #    exit 1
@@ -17,7 +22,12 @@ fi
 old_version="$1"
 new_version="$2"
 
-root="${PWD}"
+declare SCRIPT_NAME="${0##*/}"
+declare SCRIPT_DIR="$(cd ${0%/*} ; pwd)"
+root="$(cd ${SCRIPT_DIR}/.. ; pwd)"
+echo "old_version=${old_version}"
+echo "new_version=${new_version}"
+echo "root=${root}"
 
 function fail() {
   echo -e "\nERROR: Failed to set version of $1"
@@ -26,7 +36,7 @@ function fail() {
 
 
 cd "${root}"
-if ! xmlstarlet ed --ps -L -N my=http://maven.apache.org/POM/4.0.0 -u "/my:project/my:version" -v ${new_version} pom.xml 2>/dev/null ; then
+if ! xmlstarlet ed --ps -L -N my=http://maven.apache.org/POM/4.0.0 -u "/my:project/my:version" -v ${new_version} pom.xml  ; then
   fail "${root}/pom.xml"
 fi
 if ! xmlstarlet ed --ps -L -N my=http://maven.apache.org/POM/4.0.0 -u "/my:project/my:parent/my:version" -v ${new_version} pom.xml 2>/dev/null ; then
@@ -60,6 +70,7 @@ for project in li.* ; do
   fi
 done
 
+
 cd "${root}"
 for project in ch.* ; do
   cd "${root}/${project}"
@@ -74,10 +85,12 @@ for project in ch.* ; do
   fi
 done
 
+
 cd "${root}"
-if ! sed --in-place "s/${old_version}/${new_version}/" li.strolch.dev/createBundle.sh 2>/dev/null ; then
+if ! sed -i.bck "s/${old_version}/${new_version}/" "li.strolch.dev/createBundle.sh" 2>/dev/null ; then
   fail "${root}/li.strolch.dev/createBundle.sh"
 fi
+
 
 echo -e "\nINFO: Bumped version from ${old_version} to ${new_version}"
 
