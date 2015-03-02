@@ -24,7 +24,6 @@ import static li.strolch.persistence.postgresql.dao.test.CachedDaoTest.dropSchem
 import static org.junit.Assert.assertEquals;
 
 import java.io.File;
-import java.sql.SQLException;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -65,7 +64,7 @@ public class ObserverUpdateTest {
 	}
 
 	@BeforeClass
-	public static void beforeClass() throws SQLException {
+	public static void beforeClass() throws Exception {
 
 		dropSchema(DB_URL, DB_USERNAME, DB_PASSWORD);
 
@@ -127,12 +126,14 @@ public class ObserverUpdateTest {
 		Order newOrder = createOrder("MyTestOrder", "Test Name", "TestType", new Date(), State.CREATED); //$NON-NLS-1$//$NON-NLS-2$ //$NON-NLS-3$
 		try (StrolchTransaction tx = realm.openTx(certificate, "test")) { //$NON-NLS-1$
 			tx.getOrderMap().add(tx, newOrder);
+			tx.commitOnClose();
 		}
 
 		// create resource
 		Resource newResource = createResource("MyTestResource", "Test Name", "TestType"); //$NON-NLS-1$//$NON-NLS-2$ //$NON-NLS-3$
 		try (StrolchTransaction tx = realm.openTx(certificate, "test");) { //$NON-NLS-1$
 			tx.getResourceMap().add(tx, newResource);
+			tx.commitOnClose();
 		}
 
 		assertEquals(2, observer.results.size());

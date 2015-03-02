@@ -22,12 +22,14 @@ import li.strolch.model.GroupedParameterizedElement;
 import li.strolch.model.ParameterBag;
 import li.strolch.model.parameter.BooleanParameter;
 import li.strolch.model.parameter.DateParameter;
+import li.strolch.model.parameter.DurationParameter;
 import li.strolch.model.parameter.FloatParameter;
 import li.strolch.model.parameter.IntegerParameter;
 import li.strolch.model.parameter.LongParameter;
 import li.strolch.model.parameter.StringListParameter;
 import li.strolch.model.parameter.StringParameter;
 import ch.eitchnet.utils.StringMatchMode;
+import ch.eitchnet.utils.collections.DateRange;
 
 /**
  * @author Robert von Burg <eitch@eitchnet.ch>
@@ -75,9 +77,14 @@ public abstract class ParameterSelector<T extends GroupedParameterizedElement> i
 		return new DateParameterSelector<>(bagKey, paramKey, value);
 	}
 
+	public static <T extends GroupedParameterizedElement> DurationParameterSelector<T> durationSelector(String bagKey,
+			String paramKey, Long value) {
+		return new DurationParameterSelector<>(bagKey, paramKey, value);
+	}
+
 	public static <T extends GroupedParameterizedElement> DateRangeParameterSelector<T> dateRangeSelector(
-			String bagKey, String paramKey, Date from, Date to) {
-		return new DateRangeParameterSelector<>(bagKey, paramKey, from, to);
+			String bagKey, String paramKey, DateRange dateRange) {
+		return new DateRangeParameterSelector<>(bagKey, paramKey, dateRange);
 	}
 
 	public static <T extends GroupedParameterizedElement> StringListParameterSelector<T> stringListSelector(
@@ -257,13 +264,11 @@ public abstract class ParameterSelector<T extends GroupedParameterizedElement> i
 
 	public static class DateRangeParameterSelector<T extends GroupedParameterizedElement> extends ParameterSelector<T> {
 
-		private Date from;
-		private Date to;
+		private DateRange dateRange;
 
-		public DateRangeParameterSelector(String bagKey, String paramKey, Date from, Date to) {
+		public DateRangeParameterSelector(String bagKey, String paramKey, DateRange dateRange) {
 			super(bagKey, paramKey);
-			this.from = from;
-			this.to = to;
+			this.dateRange = dateRange;
 		}
 
 		@Override
@@ -278,7 +283,7 @@ public abstract class ParameterSelector<T extends GroupedParameterizedElement> i
 			DateParameter param = bag.getParameter(this.paramKey);
 			Date value = param.getValue();
 
-			return (this.from == null || !value.before(this.from)) && (this.to == null || !value.after(this.to));
+			return this.dateRange.contains(value);
 		}
 	}
 
@@ -301,6 +306,29 @@ public abstract class ParameterSelector<T extends GroupedParameterizedElement> i
 				return false;
 
 			StringListParameter param = bag.getParameter(this.paramKey);
+			return param.getValue().containsAll(this.value);
+		}
+	}
+
+	public static class DurationParameterSelector<T extends GroupedParameterizedElement> extends ParameterSelector<T> {
+
+		private Long value;
+
+		public DurationParameterSelector(String bagKey, String paramKey, Long value) {
+			super(bagKey, paramKey);
+			this.value = value;
+		}
+
+		@Override
+		public boolean select(GroupedParameterizedElement element) {
+			if (!element.hasParameterBag(this.bagKey))
+				return false;
+
+			ParameterBag bag = element.getParameterBag(this.bagKey);
+			if (!bag.hasParameter(this.paramKey))
+				return false;
+
+			DurationParameter param = bag.getParameter(this.paramKey);
 			return param.getValue().equals(this.value);
 		}
 	}

@@ -20,11 +20,10 @@ import static li.strolch.testbase.runtime.RuntimeMock.assertServiceResult;
 import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.SQLException;
 
 import li.strolch.agent.api.ComponentContainer;
 import li.strolch.agent.api.StrolchRealm;
-import li.strolch.persistence.postgresql.DbSchemaVersionCheck;
+import li.strolch.persistence.postgresql.PostgreSqlPersistenceHandler;
 import li.strolch.service.XmlImportModelArgument;
 import li.strolch.service.XmlImportModelService;
 import li.strolch.service.api.Service;
@@ -36,8 +35,12 @@ import li.strolch.testbase.runtime.RuntimeMock;
 
 import org.junit.After;
 import org.junit.Before;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import ch.eitchnet.db.DbSchemaVersionCheck;
 import ch.eitchnet.privilege.model.Certificate;
+import ch.eitchnet.utils.Version;
 
 /**
  * @author Robert von Burg <eitch@eitchnet.ch>
@@ -50,11 +53,13 @@ public abstract class AbstractRealmServiceTest {
 	public static final String RUNTIME_PATH = "target/svcTestRuntime/"; //$NON-NLS-1$
 	public static final String CONFIG_SRC = "src/test/resources/svctest"; //$NON-NLS-1$
 
+	protected static final Logger logger = LoggerFactory.getLogger(AbstractRealmServiceTest.class);
+
 	protected static RuntimeMock runtimeMock;
 	protected Certificate certificate;
 
 	@Before
-	public void before() throws SQLException {
+	public void before() throws Exception {
 
 		dropSchema("jdbc:postgresql://localhost/cacheduserdb", "cacheduser", "test");
 		dropSchema("jdbc:postgresql://localhost/transactionaluserdb", "transactionaluser", "test");
@@ -72,12 +77,15 @@ public abstract class AbstractRealmServiceTest {
 
 	@After
 	public void after() {
-		runtimeMock.destroyRuntime();
+		if (runtimeMock != null)
+			runtimeMock.destroyRuntime();
 	}
 
-	public static void dropSchema(String dbUrl, String dbUsername, String dbPassword) throws SQLException {
-		String dbVersion = DbSchemaVersionCheck.getExpectedDbVersion();
-		String sql = DbSchemaVersionCheck.getSql(dbVersion, "drop"); //$NON-NLS-1$
+	public static void dropSchema(String dbUrl, String dbUsername, String dbPassword) throws Exception {
+		Version dbVersion = DbSchemaVersionCheck.getExpectedDbVersion(PostgreSqlPersistenceHandler.SCRIPT_PREFIX,
+				PostgreSqlPersistenceHandler.class);
+		String sql = DbSchemaVersionCheck.getSql(PostgreSqlPersistenceHandler.SCRIPT_PREFIX,
+				PostgreSqlPersistenceHandler.class, dbVersion, "drop"); //$NON-NLS-1$
 		try (Connection connection = DriverManager.getConnection(dbUrl, dbUsername, dbPassword)) {
 			connection.prepareStatement(sql).execute();
 		}

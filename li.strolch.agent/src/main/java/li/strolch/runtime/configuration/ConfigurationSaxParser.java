@@ -176,7 +176,7 @@ public class ConfigurationSaxParser extends DefaultHandler {
 	public void endElement(String uri, String localName, String qName) throws SAXException {
 
 		Locator locator = this.locatorBuilder.build();
-		//logger.info("path: " + locator.toString()); //$NON-NLS-1$
+		//LoggerFactory.getLogger(getClass()).info("path: " + locator.toString()); //$NON-NLS-1$
 
 		switch (locator.toString()) {
 
@@ -345,6 +345,12 @@ public class ConfigurationSaxParser extends DefaultHandler {
 
 		@Override
 		public void startElement(String uri, String localName, String qName, Attributes attributes) throws SAXException {
+			if (this.propertyName != null) {
+				String msg = "Opening another tag {0} although {1} is still open!"; //$NON-NLS-1$
+				msg = MessageFormat.format(msg, this.propertyName, qName);
+				throw new IllegalStateException(msg);
+			}
+
 			this.propertyName = qName;
 			this.valueBuffer = new StringBuilder();
 		}
@@ -352,7 +358,7 @@ public class ConfigurationSaxParser extends DefaultHandler {
 		@Override
 		public void endElement(String uri, String localName, String qName) throws SAXException {
 			if (this.propertyName == null || !this.propertyName.equals(qName)) {
-				String msg = "Previous tag '{0}' was not closed before new tag {1}!"; //$NON-NLS-1$
+				String msg = "Previous tag {0} was not closed before new tag {1}!"; //$NON-NLS-1$
 				msg = MessageFormat.format(msg, this.propertyName, qName);
 				throw new IllegalStateException(msg);
 			}
@@ -446,6 +452,10 @@ public class ConfigurationSaxParser extends DefaultHandler {
 					if (thisComponentBuilder == null) {
 						this.componentBuilders.add(otherComponentBuilder);
 					} else {
+						if (StringHelper.isNotEmpty(otherComponentBuilder.getImpl())) {
+							thisComponentBuilder.setImpl(otherComponentBuilder.getImpl());
+							thisComponentBuilder.setDependencies(otherComponentBuilder.getDependencies());
+						}
 						thisComponentBuilder.getProperties().putAll(otherComponentBuilder.getProperties());
 					}
 				}
@@ -544,6 +554,10 @@ public class ConfigurationSaxParser extends DefaultHandler {
 
 		public Set<String> getDependencies() {
 			return this.dependencies;
+		}
+
+		public void setDependencies(Set<String> dependencies) {
+			this.dependencies = dependencies;
 		}
 
 		public void addDependency(String dependency) {

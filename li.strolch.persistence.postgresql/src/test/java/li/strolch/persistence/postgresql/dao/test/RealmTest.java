@@ -20,7 +20,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
 import java.io.File;
-import java.sql.SQLException;
 
 import li.strolch.agent.api.StrolchRealm;
 import li.strolch.agent.impl.DataStoreMode;
@@ -58,7 +57,7 @@ public class RealmTest extends AbstractModelTest {
 	}
 
 	@BeforeClass
-	public static void beforeClass() throws SQLException {
+	public static void beforeClass() throws Exception {
 
 		dropSchema("jdbc:postgresql://localhost/testdb1", TESTUSER1, TEST); //$NON-NLS-1$
 		dropSchema("jdbc:postgresql://localhost/testdb2", TESTUSER2, TEST); //$NON-NLS-1$
@@ -92,6 +91,7 @@ public class RealmTest extends AbstractModelTest {
 			Resource expectedRes1 = ModelGenerator.createResource(expectedId1, "Bla bla", type); //$NON-NLS-1$
 			try (StrolchTransaction tx = firstRealm.openTx(certificate, TEST)) {
 				tx.getResourceMap().add(tx, expectedRes1);
+				tx.commitOnClose();
 			}
 
 			try (StrolchTransaction tx = firstRealm.openTx(certificate, TEST)) {
@@ -106,6 +106,7 @@ public class RealmTest extends AbstractModelTest {
 			Resource expectedRes2 = ModelGenerator.createResource(expectedId2, "Bla bla", type); //$NON-NLS-1$
 			try (StrolchTransaction tx = secondRealm.openTx(certificate, TEST)) {
 				tx.getResourceMap().add(tx, expectedRes2);
+				tx.commitOnClose();
 			}
 
 			try (StrolchTransaction tx = secondRealm.openTx(certificate, TEST)) {

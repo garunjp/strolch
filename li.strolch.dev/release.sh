@@ -1,5 +1,9 @@
 #!/bin/bash
 
+declare SCRIPT_NAME="${0##*/}"
+declare SCRIPT_DIR="$(cd ${0%/*} ; pwd)"
+root="$(cd ${SCRIPT_DIR}/.. ; pwd)"
+
 if [ ! $(which xmlstarlet) ] ; then
   echo "ERROR: xmlstarlet is missing!"s
   exit 1
@@ -7,9 +11,17 @@ fi
 
 function usage() {
   echo "Usage: $0 [-c] [-p] [-r <release_branch>] [-b <branch>] [-o <old_version>] [-n <new_version>]" 1>&2;
+  echo "  -c                    create release branch"
+  echo "  -p                    push tags"
+  echo "  -r <release_branch>   release branch to create or using for tagging and checkout"
+  echo "  -b <branch>           branch to checkout from (important when creating the release_branch)"
+  echo "  -o <old_version>      version from which to release from e.g. 1.0.0-SNAPSHOT"
+  echo "  -n <new_version>      release version e.g. 1.0.0-RC3"
+  echo ""
   exit 1;
 }
 
+# get arguments
 while getopts ":b:o:n:r:cp" arg; do
     case "${arg}" in
         c)
@@ -38,6 +50,7 @@ while getopts ":b:o:n:r:cp" arg; do
 done
 shift $((OPTIND-1))
 
+# validate arguments
 if [ -z "${r}" ] || [ -z "${b}" ] || [ -z "${o}" ] || [ -z "${n}" ] ; then
   echo "ERROR: Missing an argument!"
   usage
@@ -49,9 +62,7 @@ if [ "$(git status --short)" != "" ] ; then
 fi
 
 
-declare SCRIPT_NAME="${0##*/}"
-declare SCRIPT_DIR="$(cd ${0%/*} ; pwd)"
-
+# set vars
 create_release_branch="${c}"
 release_branch="${r}"
 branch="${b}"
@@ -59,9 +70,8 @@ old_version="${o}"
 new_version="${n}"
 push="${p}"
 
-root="$(cd ${SCRIPT_DIR}/.. ; pwd)"
 
-
+# log what we are doing
 echo "root=${root}"
 echo "old_version=${old_version}"
 echo "new_version=${new_version}"
@@ -75,7 +85,7 @@ fi
 if [ -n "${push}" ] ; then
   echo "Pushing to origin."
 else
-  echo "NOT pusing to origin."
+  echo "NOT pushing to origin."
 fi
 
 echo ""
@@ -98,6 +108,30 @@ function fail() {
 
   echo -e "\nERROR: Failed to release version ${new_version}"
   exit 1
+}
+
+function build() {
+  cd ${root}
+  if mvn clean package -DskipTests 1> /dev/null ; then
+    echo "INFO: Build OK"
+    return 0;
+  else
+    echo "ERROR: Build failed!"
+    echo "INFO: Run mvn clean package -DskipTests to see the build problems!"
+    return 1;
+  fi
+}
+
+function createBundle() {
+  cd "${root}/li.strolch.dev"
+  if ./createBundle.sh 1> /dev/null ; then
+    echo "INFO: Bundle creation OK"
+    return 0;
+  else
+    echo "ERROR: Bundle creation failed!"
+    echo "INFO: Run ${root}/li.strolch.dev/createBundle.sh to see the bundle creation problems!"
+    return 1;
+  fi
 }
 
 
@@ -124,6 +158,13 @@ if ! git submodule foreach git checkout ${release_branch} ; then
 fi
 
 
+# build with old version
+echo "INFO: Building current version ${old_version}..."
+if ! build ; then
+  fail
+fi
+
+
 # bump version
 echo -e "\nINFO: Bumping versions..."
 ${root}/li.strolch.dev/setVersion.sh ${old_version} ${new_version}
@@ -138,6 +179,13 @@ if ! git status --short ; then
   fail
 fi
 if ! git submodule foreach git status --short ; then
+  fail
+fi
+
+
+# build with new version
+echo "Building new version ${new_version}..."
+if ! build ; then
   fail
 fi
 
@@ -168,6 +216,13 @@ if ! git commit -m "[Project] bumped version from ${old_version} to ${new_versio
   fail
 fi
 if ! git tag ${new_version} ; then
+  fail
+fi
+
+
+# create bundle for new version
+echo "Creating bundle for version ${new_version}..."
+if ! createBundle ; then
   fail
 fi
 
@@ -204,9 +259,15 @@ if [ -n "${push}" ] ; then
   echo -e "\nINFO: Pushing to origin..."
   git push origin ${new_version}
   git submodule foreach git push origin ${new_version}
+else
+  echo -e "\nINFO: To push tags perform the following:"
+  echo -e "git push origin ${new_version}"
+  echo -e "git submodule foreach git push origin ${new_version}"
+  echo -e "\nINFO: Or to delete the tags:"
+  echo -e "git submodule foreach git tag -d ${new_version}"
+  echo -e "git tag -d ${new_version}"
 fi
 
 
 echo -e "\nINFO: Released version ${new_version}"
-
 exit 0

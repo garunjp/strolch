@@ -111,10 +111,12 @@ public class CachedRealm extends InternalStrolchRealm {
 			for (String type : resourceTypes) {
 				List<Resource> resources = resourceDao.queryAll(type);
 				for (Resource resource : resources) {
-					this.resourceMap.insert(resource, null);
+					this.resourceMap.insert(resource);
 					nrOfResources++;
 				}
 			}
+
+			tx.commitOnClose();
 		}
 
 		try (StrolchTransaction tx = openTx(privilegeContext.getCertificate(), DefaultRealmHandler.AGENT_BOOT)) {
@@ -123,10 +125,12 @@ public class CachedRealm extends InternalStrolchRealm {
 			for (String type : orderTypes) {
 				List<Order> orders = orderDao.queryAll(type);
 				for (Order order : orders) {
-					this.orderMap.insert(order, null);
+					this.orderMap.insert(order);
 					nrOfOrders++;
 				}
 			}
+
+			tx.commitOnClose();
 		}
 
 		long duration = System.nanoTime() - start;

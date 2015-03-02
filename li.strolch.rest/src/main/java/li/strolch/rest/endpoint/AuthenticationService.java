@@ -16,11 +16,10 @@
 package li.strolch.rest.endpoint;
 
 import java.text.MessageFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Locale;
 
-import javax.servlet.http.HttpServletRequest;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.POST;
@@ -37,7 +36,6 @@ import javax.ws.rs.core.Response.Status;
 import li.strolch.exception.StrolchException;
 import li.strolch.rest.RestfulStrolchComponent;
 import li.strolch.rest.StrolchSessionHandler;
-import li.strolch.rest.helper.RestfulHelper;
 import li.strolch.rest.model.Login;
 import li.strolch.rest.model.LoginResult;
 import li.strolch.rest.model.LogoutResult;
@@ -62,7 +60,7 @@ public class AuthenticationService {
 	@POST
 	@Consumes(MediaType.APPLICATION_JSON)
 	@Produces(MediaType.APPLICATION_JSON)
-	public Response login(Login login, @Context HttpServletRequest request, @Context HttpHeaders headers) {
+	public Response login(Login login, @Context HttpHeaders headers) {
 
 		LoginResult loginResult = new LoginResult();
 		GenericEntity<LoginResult> entity = new GenericEntity<LoginResult>(loginResult, LoginResult.class) {
@@ -72,33 +70,31 @@ public class AuthenticationService {
 		try {
 
 			StringBuilder sb = new StringBuilder();
-			if (StringHelper.isEmpty(login.getUsername())) {
-				sb.append("Username was not given. "); //$NON-NLS-1$
+			if (StringHelper.isEmpty(login.getUsername()) || login.getUsername().length() < 2) {
+				sb.append("Username was not given or is too short!"); //$NON-NLS-1$
 			}
-			if (StringHelper.isEmpty(login.getPassword())) {
-				sb.append("Password was not given."); //$NON-NLS-1$
+			if (StringHelper.isEmpty(login.getPassword()) || login.getPassword().length() < 3) {
+				if (sb.length() > 0)
+					sb.append("\n");
+				sb.append("Password was not given or was too short!"); //$NON-NLS-1$
 			}
 
 			if (sb.length() != 0) {
 				loginResult.setMsg(MessageFormat.format("Could not log in due to: {0}", sb.toString())); //$NON-NLS-1$
-				return Response.status(Status.UNAUTHORIZED).entity(loginResult).build();
+				return Response.status(Status.BAD_REQUEST).entity(loginResult).build();
 			}
 
-			StrolchSessionHandler sessionHandler = RestfulStrolchComponent.getInstance().getComponent(
-					StrolchSessionHandler.class);
-			String origin = request == null ? "test" : request.getRemoteAddr(); //$NON-NLS-1$
-			Certificate certificate = sessionHandler.authenticate(origin, login.getUsername(), login.getPassword()
-					.getBytes());
+			RestfulStrolchComponent restfulStrolchComponent = RestfulStrolchComponent.getInstance();
+			StrolchSessionHandler sessionHandler = restfulStrolchComponent.getComponent(StrolchSessionHandler.class);
+			Certificate certificate = sessionHandler.authenticate(login.getUsername(), login.getPassword().getBytes());
 
-			Locale locale = RestfulHelper.getLocale(headers);
-			certificate.setLocale(locale);
-
-			PrivilegeHandler privilegeHandler = RestfulStrolchComponent.getInstance().getPrivilegeHandler();
+			PrivilegeHandler privilegeHandler = restfulStrolchComponent.getContainer().getPrivilegeHandler();
 			PrivilegeContext privilegeContext = privilegeHandler.getPrivilegeContext(certificate);
 			loginResult.setSessionId(certificate.getAuthToken());
 			loginResult.setUsername(certificate.getUsername());
-			loginResult.setLocale(locale.toString());
+			loginResult.setLocale(certificate.getLocale());
 			loginResult.setParameters(certificate.getPropertyMap());
+			loginResult.setRoles(new ArrayList<>(certificate.getUserRoles()));
 
 			List<String> allowList = privilegeContext.getFlatAllowList();
 			if (allowList.isEmpty())
@@ -106,12 +102,14 @@ public class AuthenticationService {
 			else
 				loginResult.setPrivileges(allowList);
 
-			return Response.ok().entity(entity).build();
+			return Response.ok().entity(entity)//
+					.header(HttpHeaders.AUTHORIZATION, certificate.getAuthToken())//
+					.build();
 
-		} catch (StrolchException e) {
+		} catch (StrolchException | PrivilegeException e) {
 			logger.error(e.getMessage(), e);
 			loginResult.setMsg(MessageFormat.format("Could not log in due to: {0}", e.getMessage())); //$NON-NLS-1$
-			return Response.status(Status.UNAUTHORIZED).entity(entity).build();
+			return Response.status(Status.FORBIDDEN).entity(entity).build();
 		} catch (Exception e) {
 			logger.error(e.getMessage(), e);
 			String msg = e.getMessage();
@@ -123,34 +121,32 @@ public class AuthenticationService {
 	@DELETE
 	@Consumes(MediaType.APPLICATION_JSON)
 	@Produces(MediaType.APPLICATION_JSON)
-	@Path("{authToken}")
-	public Response logout(@PathParam("authToken") String authToken, @Context HttpServletRequest request) {
+	@Path("{sessionId}")
+	public Response logout(@PathParam("sessionId") String sessionId) {
 
 		LogoutResult logoutResult = new LogoutResult();
 
-		GenericEntity<LogoutResult> entity = new GenericEntity<LogoutResult>(logoutResult, LogoutResult.class) {
-			//
-		};
 		try {
 
 			StrolchSessionHandler sessionHandlerHandler = RestfulStrolchComponent.getInstance().getComponent(
 					StrolchSessionHandler.class);
-			String origin = request == null ? "test" : request.getRemoteAddr(); //$NON-NLS-1$
-			Certificate certificate = sessionHandlerHandler.validate(origin, authToken);
-			sessionHandlerHandler.invalidateSession(origin, certificate);
+			Certificate certificate = sessionHandlerHandler.validate(sessionId);
+			sessionHandlerHandler.invalidateSession(certificate);
 
+			logoutResult.setUsername(certificate.getUsername());
+			logoutResult.setSessionId(sessionId);
 			logoutResult.setMsg(MessageFormat.format("{0} has been logged out.", certificate.getUsername())); //$NON-NLS-1$
-			return Response.ok().entity(entity).build();
+			return Response.ok().entity(logoutResult).build();
 
 		} catch (StrolchException | PrivilegeException e) {
 			logger.error(e.getMessage(), e);
 			logoutResult.setMsg(MessageFormat.format("Could not logout due to: {0}", e.getMessage())); //$NON-NLS-1$
-			return Response.status(Status.UNAUTHORIZED).entity(entity).build();
+			return Response.status(Status.UNAUTHORIZED).entity(logoutResult).build();
 		} catch (Exception e) {
 			logger.error(e.getMessage(), e);
 			String msg = e.getMessage();
 			logoutResult.setMsg(MessageFormat.format("{0}: {1}", e.getClass().getName(), msg)); //$NON-NLS-1$
-			return Response.serverError().entity(entity).build();
+			return Response.serverError().entity(logoutResult).build();
 		}
 	}
 }

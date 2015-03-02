@@ -17,7 +17,6 @@ package li.strolch.agent.impl;
 
 import java.text.MessageFormat;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 
@@ -28,6 +27,7 @@ import li.strolch.runtime.configuration.StrolchConfigurationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import ch.eitchnet.utils.dbc.DBC;
 import ch.eitchnet.utils.helper.StringHelper;
 
 public class ComponentDependencyAnalyzer {
@@ -62,7 +62,25 @@ public class ComponentDependencyAnalyzer {
 		return controllers;
 	}
 
+	private Set<ComponentController> collectAllUpstreamDependencies(ComponentController controller) {
+		Set<ComponentController> upstreamDependencies = new HashSet<>(controller.getUpstreamDependencies());
+		for (ComponentController upstream : controller.getUpstreamDependencies()) {
+			upstreamDependencies.addAll(collectAllUpstreamDependencies(upstream));
+		}
+
+		return upstreamDependencies;
+	}
+
 	public Set<ComponentController> collectDirectUpstreamDependencies(Set<ComponentController> controllers) {
+
+		// assert no upstream is in this list
+		for (ComponentController controller : controllers) {
+			Set<ComponentController> upstreamDependencies = collectAllUpstreamDependencies(controller);
+			for (ComponentController upstream : upstreamDependencies) {
+				DBC.INTERIM.assertFalse("Upstream " + upstream.getName() + " is one of the input controllers!",
+						controllers.contains(upstream));
+			}
+		}
 
 		Set<ComponentController> directUpstreamDependencies = new HashSet<>();
 
@@ -72,28 +90,35 @@ public class ComponentDependencyAnalyzer {
 			directUpstreamDependencies.addAll(upstreamDependencies);
 		}
 
-		// prune dependencies which are a dependency of any of these dependencies
-		for (ComponentController controller : controllers) {
-			Set<ComponentController> upstreamDependencies = controller.getUpstreamDependencies();
-
-			for (ComponentController upstream : upstreamDependencies) {
-
-				Iterator<ComponentController> iter = directUpstreamDependencies.iterator();
-				while (iter.hasNext()) {
-					ComponentController possibleTransitiveDependency = iter.next();
-					if (upstream.hasUpstreamDependency(possibleTransitiveDependency))
-						continue;
-
-					if (possibleTransitiveDependency.hasTransitiveUpstreamDependency(upstream))
-						iter.remove();
-				}
-			}
+		// prune any controllers which are an upstream dependency of any of these dependencies
+		Set<ComponentController> tmp = new HashSet<>(directUpstreamDependencies);
+		for (ComponentController controller : tmp) {
+			Set<ComponentController> upstreamDeps = collectAllUpstreamDependencies(controller);
+			directUpstreamDependencies.removeAll(upstreamDeps);
 		}
 
 		return directUpstreamDependencies;
 	}
 
+	private Set<ComponentController> collectAllDownstreamDependencies(ComponentController controller) {
+		Set<ComponentController> downstreamDependencies = new HashSet<>(controller.getDownstreamDependencies());
+		for (ComponentController downstream : controller.getDownstreamDependencies()) {
+			downstreamDependencies.addAll(collectAllDownstreamDependencies(downstream));
+		}
+
+		return downstreamDependencies;
+	}
+
 	public Set<ComponentController> collectDirectDownstreamDependencies(Set<ComponentController> controllers) {
+
+		// assert no downstream is in this list
+		for (ComponentController controller : controllers) {
+			Set<ComponentController> downstreamDependencies = collectAllUpstreamDependencies(controller);
+			for (ComponentController downstream : downstreamDependencies) {
+				DBC.INTERIM.assertFalse("Downstream " + downstream.getName() + " is one of the input controllers!",
+						controllers.contains(downstream));
+			}
+		}
 
 		Set<ComponentController> directDownstreamDependencies = new HashSet<>();
 
@@ -103,22 +128,11 @@ public class ComponentDependencyAnalyzer {
 			directDownstreamDependencies.addAll(downstreamDependencies);
 		}
 
-		// prune dependencies which are a dependency of any of these dependencies
-		for (ComponentController controller : controllers) {
-			Set<ComponentController> downstreamDependencies = controller.getDownstreamDependencies();
-
-			for (ComponentController downstream : downstreamDependencies) {
-
-				Iterator<ComponentController> iter = directDownstreamDependencies.iterator();
-				while (iter.hasNext()) {
-					ComponentController possibleTransitiveDependency = iter.next();
-					if (downstream.hasUpstreamDependency(possibleTransitiveDependency))
-						continue;
-
-					if (possibleTransitiveDependency.hasTransitiveDownstreamDependency(downstream))
-						iter.remove();
-				}
-			}
+		// prune any controllers which are a downstream dependency of any of these dependencies
+		Set<ComponentController> tmp = new HashSet<>(directDownstreamDependencies);
+		for (ComponentController controller : tmp) {
+			Set<ComponentController> downstreamDeps = collectAllDownstreamDependencies(controller);
+			directDownstreamDependencies.removeAll(downstreamDeps);
 		}
 
 		return directDownstreamDependencies;
@@ -141,19 +155,20 @@ public class ComponentDependencyAnalyzer {
 			}
 		}
 
-		logDependencies(0, findRootUpstreamComponents());
+		logDependencies(1, findRootUpstreamComponents());
 	}
 
 	/**
 	 * @param components
 	 */
 	private void logDependencies(int depth, Set<ComponentController> components) {
-		if (depth == 0) {
+		if (depth == 1) {
 			logger.info("Dependency tree:"); //$NON-NLS-1$
 		}
-		String inset = StringHelper.normalizeLength("  ", depth * 2, false, ' '); //$NON-NLS-1$
+		String inset = StringHelper.normalizeLength("", depth * 2, false, ' '); //$NON-NLS-1$
 		for (ComponentController controller : components) {
-			logger.info(inset + controller.getComponent().getName());
+			logger.info(inset + controller.getComponent().getName() + ": "
+					+ controller.getComponent().getClass().getName());
 			logDependencies(depth + 1, controller.getDownstreamDependencies());
 		}
 	}

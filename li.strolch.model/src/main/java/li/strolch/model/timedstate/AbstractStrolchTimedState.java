@@ -40,6 +40,8 @@ import org.w3c.dom.Element;
 import ch.eitchnet.utils.helper.StringHelper;
 
 /**
+ * Wrapper for a {@link IntegerTimedState}
+ * 
  * @author Robert von Burg <eitch@eitchnet.ch>
  */
 @SuppressWarnings("rawtypes")
@@ -151,6 +153,11 @@ public abstract class AbstractStrolchTimedState<T extends IValue> extends Abstra
 	@Override
 	public StrolchRootElement getRootElement() {
 		return this.parent;
+	}
+
+	@Override
+	public boolean isRootElement() {
+		return false;
 	}
 
 	@Override

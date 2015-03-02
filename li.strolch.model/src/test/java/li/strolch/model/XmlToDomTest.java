@@ -27,7 +27,6 @@ import org.w3c.dom.Element;
 
 /**
  * @author Robert von Burg <eitch@eitchnet.ch>
- *
  */
 @SuppressWarnings("nls")
 public class XmlToDomTest extends ModelTest {

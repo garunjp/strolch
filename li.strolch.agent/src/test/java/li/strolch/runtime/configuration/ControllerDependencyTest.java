@@ -20,13 +20,16 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import li.strolch.agent.api.ComponentState;
 import li.strolch.agent.api.StrolchComponent;
 import li.strolch.agent.impl.ComponentContainerImpl;
+import li.strolch.agent.impl.ComponentContainerStateHandler;
 import li.strolch.agent.impl.ComponentController;
 import li.strolch.agent.impl.ComponentDependencyAnalyzer;
 
@@ -34,6 +37,8 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+
+import ch.eitchnet.utils.dbc.DBC.DbcException;
 
 @SuppressWarnings("nls")
 public class ControllerDependencyTest {
@@ -169,9 +174,6 @@ public class ControllerDependencyTest {
 
 		//
 
-		File rootPathF = new File("src/test/resources/configtest");
-		this.strolchConfiguration = ConfigurationParser.parseConfiguration("dev", rootPathF);
-
 		this.controllerMap = new HashMap<>();
 
 		this.controllerMap.put("2", this.con2);
@@ -195,6 +197,15 @@ public class ControllerDependencyTest {
 		this.controllerMap.put("C2", this.conC2);
 		this.controllerMap.put("D2", this.conD2);
 
+		//
+
+		File rootPathF = new File("src/test/resources/configtest");
+		this.strolchConfiguration = ConfigurationParser.parseConfiguration("dev", rootPathF);
+		for (ComponentController controller : this.controllerMap.values()) {
+			ComponentConfiguration componentConfiguration = new ComponentConfiguration(
+					this.strolchConfiguration.getRuntimeConfiguration(), controller.getName(), null, null, null, null);
+			this.strolchConfiguration.addConfiguration(controller.getName(), componentConfiguration);
+		}
 	}
 
 	private void assertModel() {
@@ -401,7 +412,7 @@ public class ControllerDependencyTest {
 				.collectDirectUpstreamDependencies(controllers);
 
 		assertEquals(1, directUpstreamDependencies.size());
-		assertTrue(directUpstreamDependencies.contains(this.conA));
+		assertTrue(directUpstreamDependencies.contains(this.conB));
 	}
 
 	@Test
@@ -438,17 +449,18 @@ public class ControllerDependencyTest {
 
 		Set<ComponentController> controllers = new HashSet<>();
 		controllers.add(this.conB1);
-		controllers.add(this.conC1);
 
 		Set<ComponentController> directUpstreamDependencies = dependencyAnalyzer
 				.collectDirectUpstreamDependencies(controllers);
 
 		assertEquals(1, directUpstreamDependencies.size());
-		assertTrue(directUpstreamDependencies.contains(this.conA1));
+		assertTrue(directUpstreamDependencies.contains(this.conC1));
 	}
 
 	@Test
-	public void shouldCollectUpstreamDependencies4() {
+	public void shouldNotCollectUpstreamDependencies4() {
+		thrown.expect(DbcException.class);
+		thrown.expectMessage("Upstream C1 is one of the input controllers!");
 		assertModel();
 
 		ComponentDependencyAnalyzer dependencyAnalyzer = new ComponentDependencyAnalyzer(this.strolchConfiguration,
@@ -479,7 +491,7 @@ public class ControllerDependencyTest {
 				.collectDirectUpstreamDependencies(controllers);
 
 		assertEquals(1, directUpstreamDependencies.size());
-		assertTrue(directUpstreamDependencies.contains(this.conA1));
+		assertTrue(directUpstreamDependencies.contains(this.conC1));
 	}
 
 	//
@@ -522,7 +534,7 @@ public class ControllerDependencyTest {
 				.collectDirectUpstreamDependencies(controllers);
 
 		assertEquals(1, directUpstreamDependencies.size());
-		assertTrue(directUpstreamDependencies.contains(this.conA2));
+		assertTrue(directUpstreamDependencies.contains(this.conB2));
 	}
 
 	//    +-> A2
@@ -568,4 +580,43 @@ public class ControllerDependencyTest {
 		assertTrue(transitiveUpstreamDependency2.hasTransitiveDownstreamDependency(controller));
 	}
 
+	@Test
+	public void shouldRunThroughModelStates() {
+
+		ComponentDependencyAnalyzer dependencyAnalyzer = new ComponentDependencyAnalyzer(this.strolchConfiguration,
+				this.controllerMap);
+		ComponentContainerStateHandler stateHandler = new ComponentContainerStateHandler(dependencyAnalyzer,
+				strolchConfiguration);
+
+		for (ComponentController controller : this.controllerMap.values()) {
+			assertEquals(ComponentState.UNDEFINED, controller.getState());
+
+			ComponentConfiguration componentConfiguration = this.strolchConfiguration
+					.getComponentConfiguration(controller.getName());
+			controller.getComponent().setup(componentConfiguration);
+		}
+
+		Set<ComponentController> rootUpstreamComponents = dependencyAnalyzer.findRootUpstreamComponents();
+
+		assertState(ComponentState.SETUP, this.controllerMap.values());
+
+		stateHandler.initialize(rootUpstreamComponents);
+		assertState(ComponentState.INITIALIZED, this.controllerMap.values());
+
+		stateHandler.start(rootUpstreamComponents);
+		assertState(ComponentState.STARTED, this.controllerMap.values());
+
+		Set<ComponentController> rootDownstreamComponents = dependencyAnalyzer.findRootDownstreamComponents();
+		stateHandler.stop(rootDownstreamComponents);
+		assertState(ComponentState.STOPPED, this.controllerMap.values());
+
+		stateHandler.destroy(rootDownstreamComponents);
+		assertState(ComponentState.DESTROYED, this.controllerMap.values());
+	}
+
+	private void assertState(ComponentState expectedState, Collection<ComponentController> collection) {
+		for (ComponentController controller : collection) {
+			assertEquals(expectedState, controller.getState());
+		}
+	}
 }

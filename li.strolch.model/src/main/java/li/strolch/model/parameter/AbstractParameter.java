@@ -131,6 +131,11 @@ public abstract class AbstractParameter<T> extends AbstractStrolchElement implem
 	}
 
 	@Override
+	public boolean isRootElement() {
+		return false;
+	}
+
+	@Override
 	public Element toDom(Document doc) {
 		Element element = doc.createElement(Tags.PARAMETER);
 		fillElement(element);
@@ -222,8 +227,8 @@ public abstract class AbstractParameter<T> extends AbstractStrolchElement implem
 	 */
 	protected void validateValue(T value) throws StrolchException {
 		if (value == null) {
-			String msg = "{0} Parameter {1} may not have a null value!"; //$NON-NLS-1$
-			msg = MessageFormat.format(msg, getType(), getId());
+			String msg = "Can not set null value on Parameter {0}"; //$NON-NLS-1$
+			msg = MessageFormat.format(msg, getLocator());
 			throw new StrolchException(msg);
 		}
 	}

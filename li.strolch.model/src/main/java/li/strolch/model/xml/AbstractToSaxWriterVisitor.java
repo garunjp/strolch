@@ -42,6 +42,7 @@ import li.strolch.model.timevalue.ITimeValue;
 import li.strolch.model.timevalue.ITimeVariable;
 import li.strolch.model.timevalue.IValue;
 import ch.eitchnet.utils.helper.StringHelper;
+import ch.eitchnet.utils.iso8601.ISO8601FormatFactory;
 
 /**
  * @author Robert von Burg <eitch@eitchnet.ch>
@@ -82,11 +83,12 @@ public abstract class AbstractToSaxWriterVisitor {
 			ITimeVariable<IValue<?>> timeEvolution = timedState.getTimeEvolution();
 			SortedSet<ITimeValue<IValue<?>>> values = timeEvolution.getValues();
 
-			writeStartStrolchElement(Tags.TIMED_STATE, !values.isEmpty(), timedState);
+			writeStartStrolchElement(Tags.TIMED_STATE, values.isEmpty(), timedState);
 
 			for (ITimeValue<IValue<?>> timeValue : values) {
 				this.writer.writeEmptyElement(Tags.VALUE);
-				this.writer.writeAttribute(Tags.TIME, timeValue.getTime().toString());
+				this.writer.writeAttribute(Tags.TIME, ISO8601FormatFactory.getInstance()
+						.formatDate(timeValue.getTime()));
 				this.writer.writeAttribute(Tags.VALUE, timeValue.getValue().getValueAsString());
 			}
 

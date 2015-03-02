@@ -19,10 +19,12 @@ import java.text.MessageFormat;
 
 import li.strolch.agent.api.ComponentContainer;
 import li.strolch.agent.api.StrolchComponent;
+import li.strolch.exception.StrolchAccessDeniedException;
 import li.strolch.exception.StrolchException;
 import li.strolch.runtime.configuration.ComponentConfiguration;
 import li.strolch.runtime.configuration.RuntimeConfiguration;
 import li.strolch.runtime.privilege.PrivilegeHandler;
+import ch.eitchnet.privilege.base.PrivilegeException;
 import ch.eitchnet.privilege.model.Certificate;
 import ch.eitchnet.privilege.model.PrivilegeContext;
 import ch.eitchnet.utils.helper.StringHelper;
@@ -32,8 +34,10 @@ import ch.eitchnet.utils.helper.StringHelper;
  */
 public class DefaultServiceHandler extends StrolchComponent implements ServiceHandler {
 
+	private static final String PARAM_THROW_ON_PRIVILEGE_FAIL = "throwOnPrivilegeFail";
 	private RuntimeConfiguration runtimeConfiguration;
 	private PrivilegeHandler privilegeHandler;
+	private boolean throwOnPrivilegeFail;
 
 	/**
 	 * @param container
@@ -47,6 +51,7 @@ public class DefaultServiceHandler extends StrolchComponent implements ServiceHa
 	public void initialize(ComponentConfiguration configuration) {
 		this.privilegeHandler = getContainer().getPrivilegeHandler();
 		this.runtimeConfiguration = configuration.getRuntimeConfiguration();
+		this.throwOnPrivilegeFail = configuration.getBoolean(PARAM_THROW_ON_PRIVILEGE_FAIL, Boolean.FALSE);
 		super.initialize(configuration);
 	}
 
@@ -70,8 +75,33 @@ public class DefaultServiceHandler extends StrolchComponent implements ServiceHa
 		long start = System.nanoTime();
 
 		// first check that the caller may perform this service
-		PrivilegeContext privilegeContext = this.privilegeHandler.getPrivilegeContext(certificate);
-		privilegeContext.validateAction(service);
+		PrivilegeContext privilegeContext;
+		String username = certificate == null ? "null" : certificate.getUsername();
+		try {
+			privilegeContext = this.privilegeHandler.getPrivilegeContext(certificate);
+			privilegeContext.validateAction(service);
+		} catch (PrivilegeException e) {
+
+			long end = System.nanoTime();
+			String msg = "User {0}: Service {1} failed after {2} due to {3}"; //$NON-NLS-1$
+			msg = MessageFormat.format(msg, username, service.getClass().getName(),
+					StringHelper.formatNanoDuration(end - start), e.getMessage());
+			logger.error(msg);
+
+			if (!this.throwOnPrivilegeFail && service instanceof AbstractService) {
+				logger.error(e.getMessage(), e);
+
+				AbstractService<?, ?> abstractService = (AbstractService<?, ?>) service;
+				@SuppressWarnings("unchecked")
+				U arg = (U) abstractService.getResultInstance();
+				arg.setState(ServiceResultState.ACCESS_DENIED);
+				arg.setMessage(e.getMessage());
+				arg.setThrowable(e);
+				return arg;
+			} else {
+				throw new StrolchAccessDeniedException(certificate, service, e.getMessage(), e);
+			}
+		}
 
 		try {
 			// then perform the service
@@ -84,29 +114,60 @@ public class DefaultServiceHandler extends StrolchComponent implements ServiceHa
 			U serviceResult = service.doService(argument);
 			if (serviceResult == null) {
 				String msg = "Service {0} is not properly implemented as it returned a null result!"; //$NON-NLS-1$
-				msg = MessageFormat.format(msg, service);
+				msg = MessageFormat.format(msg, service.getClass().getSimpleName());
 				throw new StrolchException(msg);
 			}
 
 			// log the result
-			long end = System.nanoTime();
-			String msg = "Service {0} took {1}"; //$NON-NLS-1$
-			msg = MessageFormat.format(msg, service, StringHelper.formatNanoDuration(end - start));
-			if (serviceResult.getState() == ServiceResultState.SUCCESS)
-				logger.info(msg);
-			else if (serviceResult.getState() == ServiceResultState.WARNING)
-				logger.warn(msg);
-			else if (serviceResult.getState() == ServiceResultState.FAILED)
-				logger.error(msg);
+			logResult(service, start, username, serviceResult);
 
 			return serviceResult;
 
 		} catch (Exception e) {
 			long end = System.nanoTime();
-			String msg = "Failed to perform service {0} after {1} due to {2}"; //$NON-NLS-1$
-			msg = MessageFormat.format(msg, service, StringHelper.formatNanoDuration(end - start), e.getMessage());
-			logger.error(msg, e);
+			String msg = "User {0}: Service failed {1} after {2} due to {3}"; //$NON-NLS-1$
+			msg = MessageFormat.format(msg, username, service.getClass().getName(),
+					StringHelper.formatNanoDuration(end - start), e.getMessage());
+			logger.error(msg);
 			throw new StrolchException(msg, e);
+		}
+	}
+
+	private void logResult(Service<?, ?> service, long start, String username, ServiceResult serviceResult) {
+
+		long end = System.nanoTime();
+
+		String msg = "User {0}: Service {1} took {2}"; //$NON-NLS-1$
+		msg = MessageFormat.format(msg, username, service.getClass().getName(),
+				StringHelper.formatNanoDuration(end - start));
+
+		if (serviceResult.getState() == ServiceResultState.SUCCESS) {
+			logger.info(msg);
+		} else if (serviceResult.getState() == ServiceResultState.WARNING) {
+
+			msg = ServiceResultState.WARNING + " " + msg;
+			logger.warn(msg);
+
+			if (StringHelper.isNotEmpty(serviceResult.getMessage()) && serviceResult.getThrowable() != null) {
+				logger.warn("Reason: " + serviceResult.getMessage(), serviceResult.getThrowable());
+			} else if (StringHelper.isNotEmpty(serviceResult.getMessage())) {
+				logger.warn("Reason: " + serviceResult.getMessage());
+			} else if (serviceResult.getThrowable() != null) {
+				logger.warn("Reason: " + serviceResult.getThrowable().getMessage(), serviceResult.getThrowable());
+			}
+
+		} else if (serviceResult.getState() == ServiceResultState.FAILED) {
+
+			msg = ServiceResultState.FAILED + " " + msg;
+			logger.error(msg);
+
+			if (StringHelper.isNotEmpty(serviceResult.getMessage()) && serviceResult.getThrowable() != null) {
+				logger.error("Reason: " + serviceResult.getMessage(), serviceResult.getThrowable());
+			} else if (StringHelper.isNotEmpty(serviceResult.getMessage())) {
+				logger.error("Reason: " + serviceResult.getMessage());
+			} else if (serviceResult.getThrowable() != null) {
+				logger.error("Reason: " + serviceResult.getThrowable().getMessage(), serviceResult.getThrowable());
+			}
 		}
 	}
 }

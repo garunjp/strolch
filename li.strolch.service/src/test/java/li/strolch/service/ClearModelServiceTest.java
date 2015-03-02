@@ -88,5 +88,4 @@ public class ClearModelServiceTest extends AbstractRealmServiceTest {
 
 		runServiceInAllRealmTypes(ClearModelService.class, arg, null, validator, null);
 	}
-
 }

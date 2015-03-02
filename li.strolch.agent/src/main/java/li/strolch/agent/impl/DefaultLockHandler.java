@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 import li.strolch.agent.api.LockHandler;
-import li.strolch.exception.StrolchException;
+import li.strolch.agent.api.StrolchLockException;
 import li.strolch.model.Locator;
 import li.strolch.model.StrolchRootElement;
 
@@ -60,7 +60,7 @@ public class DefaultLockHandler implements LockHandler {
 	}
 
 	@Override
-	public void lock(StrolchRootElement element) {
+	public void lock(StrolchRootElement element) throws StrolchLockException {
 		Locator locator = element.getLocator();
 		ReentrantLock lock = this.lockMap.get(locator);
 		if (lock == null) {
@@ -68,11 +68,11 @@ public class DefaultLockHandler implements LockHandler {
 			this.lockMap.put(locator, lock);
 		}
 
-		lock(this.tryLockTimeUnit, this.tryLockTime, lock);
+		lock(this.tryLockTimeUnit, this.tryLockTime, lock, element);
 	}
 
 	@Override
-	public void unlock(StrolchRootElement element) {
+	public void unlock(StrolchRootElement element) throws StrolchLockException {
 		Locator locator = element.getLocator();
 		ReentrantLock lock = this.lockMap.get(locator);
 		if (lock == null || !lock.isHeldByCurrentThread()) {
@@ -82,30 +82,55 @@ public class DefaultLockHandler implements LockHandler {
 		}
 	}
 
+	@Override
+	public void releaseLock(StrolchRootElement element) throws StrolchLockException {
+		Locator locator = element.getLocator();
+		ReentrantLock lock = this.lockMap.get(locator);
+		if (lock == null || !lock.isHeldByCurrentThread()) {
+			logger.error(MessageFormat.format("Trying to unlock not locked element {0}", locator)); //$NON-NLS-1$
+		} else {
+			releaseLock(lock);
+		}
+	}
+
 	/**
 	 * @see java.util.concurrent.locks.ReentrantLock#tryLock(long, TimeUnit)
 	 */
-	private void lock(TimeUnit timeUnit, long tryLockTime, ReentrantLock lock) {
+	private void lock(TimeUnit timeUnit, long tryLockTime, ReentrantLock lock, StrolchRootElement element)
+			throws StrolchLockException {
 		try {
 
 			if (!lock.tryLock(tryLockTime, timeUnit)) {
 				String msg = "Failed to acquire lock after {0}s for {1}"; //$NON-NLS-1$
-				msg = MessageFormat.format(msg, timeUnit.toSeconds(tryLockTime), toString());
-				throw new StrolchException(msg);
+				msg = MessageFormat.format(msg, timeUnit.toSeconds(tryLockTime), element.getLocator());
+				throw new StrolchLockException(msg);
 			}
 			if (logger.isDebugEnabled())
 				logger.debug("locked " + toString()); //$NON-NLS-1$
 		} catch (InterruptedException e) {
-			throw new StrolchException("Thread interrupted: " + e.getMessage(), e); //$NON-NLS-1$
+			throw new StrolchLockException(e.getMessage(), e); //$NON-NLS-1$
 		}
 	}
 
 	/**
 	 * @see java.util.concurrent.locks.ReentrantLock#unlock()
 	 */
-	private void unlock(ReentrantLock lock) {
-		lock.unlock();
-		if (logger.isDebugEnabled())
-			logger.debug("unlocking " + toString()); //$NON-NLS-1$
+	private void unlock(ReentrantLock lock) throws StrolchLockException {
+		try {
+			lock.unlock();
+			if (logger.isDebugEnabled())
+				logger.debug("unlocking " + toString()); //$NON-NLS-1$
+		} catch (IllegalMonitorStateException e) {
+			throw new StrolchLockException(e.getMessage(), e); //$NON-NLS-1$
+		}
+	}
+
+	/**
+	 * @see java.util.concurrent.locks.ReentrantLock#unlock()
+	 */
+	private void releaseLock(ReentrantLock lock) {
+		while (lock.isHeldByCurrentThread() && lock.isLocked()) {
+			unlock(lock);
+		}
 	}
 }

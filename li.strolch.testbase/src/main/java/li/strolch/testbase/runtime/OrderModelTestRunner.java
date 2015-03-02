@@ -49,6 +49,7 @@ public class OrderModelTestRunner {
 		Order newOrder = createOrder("MyTestOrder", "Test Name", "TestType"); //$NON-NLS-1$//$NON-NLS-2$ //$NON-NLS-3$
 		try (StrolchTransaction tx = this.runtimeMock.getRealm(this.realmName).openTx(this.certificate, "test");) {
 			tx.getOrderMap().add(tx, newOrder);
+			tx.commitOnClose();
 		}
 	}
 
@@ -57,6 +58,7 @@ public class OrderModelTestRunner {
 		// remove all
 		try (StrolchTransaction tx = this.runtimeMock.getRealm(this.realmName).openTx(this.certificate, "test");) {
 			tx.getOrderMap().removeAll(tx, tx.getOrderMap().getAllElements(tx));
+			tx.commitOnClose();
 		}
 
 		// create three orders
@@ -67,6 +69,7 @@ public class OrderModelTestRunner {
 			tx.getOrderMap().add(tx, order1);
 			tx.getOrderMap().add(tx, order2);
 			tx.getOrderMap().add(tx, order3);
+			tx.commitOnClose();
 		}
 
 		// query size
@@ -94,6 +97,7 @@ public class OrderModelTestRunner {
 		Order newOrder = createOrder(ID, NAME, TYPE);
 		try (StrolchTransaction tx = this.runtimeMock.getRealm(this.realmName).openTx(this.certificate, "test");) {
 			tx.getOrderMap().add(tx, newOrder);
+			tx.commitOnClose();
 		}
 
 		// read
@@ -109,6 +113,7 @@ public class OrderModelTestRunner {
 		sParam.setValue(newStringValue);
 		try (StrolchTransaction tx = this.runtimeMock.getRealm(this.realmName).openTx(this.certificate, "test");) {
 			tx.getOrderMap().update(tx, readOrder);
+			tx.commitOnClose();
 		}
 
 		// read updated
@@ -125,6 +130,7 @@ public class OrderModelTestRunner {
 		// delete
 		try (StrolchTransaction tx = this.runtimeMock.getRealm(this.realmName).openTx(this.certificate, "test");) {
 			tx.getOrderMap().remove(tx, readOrder);
+			tx.commitOnClose();
 		}
 
 		// fail to re-read
@@ -155,6 +161,7 @@ public class OrderModelTestRunner {
 		try (StrolchTransaction tx = this.runtimeMock.getRealm(this.realmName).openTx(this.certificate, "test")) {
 			OrderMap orderMap = tx.getOrderMap();
 			orderMap.removeAll(tx, orderMap.getAllElements(tx));
+			tx.commitOnClose();
 		}
 
 		{
@@ -167,6 +174,7 @@ public class OrderModelTestRunner {
 			// now add some orders
 			try (StrolchTransaction tx = this.runtimeMock.getRealm(this.realmName).openTx(this.certificate, "test")) {
 				tx.getOrderMap().addAll(tx, orders);
+				tx.commitOnClose();
 			}
 
 			// make sure we have our expected size
@@ -179,6 +187,7 @@ public class OrderModelTestRunner {
 			// now use the remove all by type
 			try (StrolchTransaction tx = this.runtimeMock.getRealm(this.realmName).openTx(this.certificate, "test")) {
 				tx.getOrderMap().removeAllBy(tx, "MyType3");
+				tx.commitOnClose();
 			}
 
 			// again make sure we have our expected size
@@ -192,6 +201,7 @@ public class OrderModelTestRunner {
 			try (StrolchTransaction tx = this.runtimeMock.getRealm(this.realmName).openTx(this.certificate, "test")) {
 				long removed = tx.getOrderMap().removeAll(tx);
 				assertEquals(orders.size() - 5, removed);
+				tx.commitOnClose();
 			}
 
 			// again make sure we have our expected size
@@ -204,6 +214,7 @@ public class OrderModelTestRunner {
 		// now add all again
 		try (StrolchTransaction tx = this.runtimeMock.getRealm(this.realmName).openTx(this.certificate, "test")) {
 			tx.getOrderMap().addAll(tx, orders);
+			tx.commitOnClose();
 		}
 
 		Set<String> expectedTypes = new HashSet<>();

@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Set;
 
 import li.strolch.agent.api.AuditTrail;
@@ -27,11 +28,13 @@ import li.strolch.agent.api.ObserverHandler;
 import li.strolch.agent.api.OrderMap;
 import li.strolch.agent.api.ResourceMap;
 import li.strolch.agent.api.StrolchAgent;
+import li.strolch.agent.api.StrolchLockException;
 import li.strolch.agent.api.StrolchRealm;
 import li.strolch.agent.impl.AuditingAuditMapFacade;
 import li.strolch.agent.impl.AuditingOrderMap;
 import li.strolch.agent.impl.AuditingResourceMap;
 import li.strolch.agent.impl.InternalStrolchRealm;
+import li.strolch.exception.StrolchAccessDeniedException;
 import li.strolch.exception.StrolchException;
 import li.strolch.model.GroupedParameterizedElement;
 import li.strolch.model.Locator;
@@ -59,12 +62,14 @@ import li.strolch.model.timevalue.IValue;
 import li.strolch.model.visitor.NoStrategyOrderVisitor;
 import li.strolch.model.visitor.NoStrategyResourceVisitor;
 import li.strolch.persistence.inmemory.InMemoryTransaction;
+import li.strolch.runtime.StrolchConstants;
 import li.strolch.runtime.privilege.PrivilegeHandler;
 import li.strolch.service.api.Command;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import ch.eitchnet.privilege.base.PrivilegeException;
 import ch.eitchnet.privilege.model.Certificate;
 import ch.eitchnet.privilege.model.PrivilegeContext;
 import ch.eitchnet.utils.dbc.DBC;
@@ -81,9 +86,11 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 	private TransactionCloseStrategy closeStrategy;
 	private boolean suppressUpdates;
 	private boolean suppressAudits;
+	private boolean suppressDoNothingLogging;
 	private TransactionResult txResult;
 
 	private List<Command> commands;
+	private List<Command> flushedCommands;
 	private Set<StrolchRootElement> lockedElements;
 
 	private AuditingOrderMap orderMap;
@@ -107,35 +114,28 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 		this.certificate = certificate;
 
 		this.commands = new ArrayList<>();
+		this.flushedCommands = new ArrayList<>();
 		this.lockedElements = new HashSet<>();
-		this.closeStrategy = TransactionCloseStrategy.COMMIT;
+		this.closeStrategy = TransactionCloseStrategy.DO_NOTHING;
 		this.txResult = new TransactionResult(getRealmName(), System.nanoTime(), new Date());
 		this.txResult.setState(TransactionState.OPEN);
 	}
 
 	@Override
-	public boolean isOpen() {
-		return this.txResult.getState() == TransactionState.OPEN;
+	public TransactionState getState() {
+		return this.txResult.getState();
 	}
 
-	@Override
 	public boolean isRollingBack() {
-		return this.txResult.getState() == TransactionState.ROLLING_BACK;
+		return this.txResult.getState().isRollingBack();
 	}
 
-	@Override
 	public boolean isCommitting() {
-		return this.txResult.getState() == TransactionState.COMMITTING;
+		return this.txResult.getState().isCommitting();
 	}
 
-	@Override
-	public boolean isCommitted() {
-		return this.txResult.getState() == TransactionState.COMMITTED;
-	}
-
-	@Override
-	public boolean isRolledBack() {
-		return this.txResult.getState() == TransactionState.ROLLED_BACK;
+	public boolean isClosing() {
+		return this.txResult.getState().isClosing();
 	}
 
 	@Override
@@ -148,60 +148,90 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 	}
 
 	@Override
-	public void setCloseStrategy(TransactionCloseStrategy closeStrategy) {
+	public Certificate getCertificate() {
+		return certificate;
+	}
+
+	@Override
+	public TransactionCloseStrategy getCloseStrategy() {
+		return this.closeStrategy;
+	}
+
+	private void setCloseStrategy(TransactionCloseStrategy closeStrategy) {
 		this.closeStrategy = closeStrategy;
 	}
 
 	@Override
-	public void close() throws StrolchPersistenceException {
+	public void close() throws StrolchTransactionException {
 		this.closeStrategy.close(this);
 	}
 
-	/**
-	 * @param suppressUpdates
-	 *            the suppressUpdates to set
-	 */
+	@Override
+	public void doNothingOnClose() {
+		setCloseStrategy(TransactionCloseStrategy.DO_NOTHING);
+	}
+
+	@Override
+	public void commitOnClose() {
+		setCloseStrategy(TransactionCloseStrategy.COMMIT);
+	}
+
+	@Override
+	public void rollbackOnClose() {
+		setCloseStrategy(TransactionCloseStrategy.ROLLBACK);
+	}
+
+	@Override
+	public StrolchTransactionException fail(String string) {
+		rollbackOnClose();
+		return new StrolchTransactionException(string);
+	}
+
+	@Override
 	public void setSuppressUpdates(boolean suppressUpdates) {
 		this.suppressUpdates = suppressUpdates;
 	}
 
-	/**
-	 * @return the suppressUpdates
-	 */
+	@Override
 	public boolean isSuppressUpdates() {
 		return this.suppressUpdates;
 	}
 
-	/**
-	 * @param suppressAudits
-	 *            the suppressAudits to set
-	 */
+	@Override
 	public void setSuppressAudits(boolean suppressAudits) {
 		this.suppressAudits = suppressAudits;
 	}
 
-	/**
-	 * @return the suppressAudits
-	 */
+	@Override
 	public boolean isSuppressAudits() {
 		return this.suppressAudits;
 	}
 
 	@Override
-	public <T extends StrolchRootElement> void lock(T element) {
+	public boolean isSuppressDoNothingLogging() {
+		return suppressDoNothingLogging;
+	}
+
+	@Override
+	public void setSuppressDoNothingLogging(boolean quietDoNothing) {
+		this.suppressDoNothingLogging = quietDoNothing;
+	}
+
+	@Override
+	public <T extends StrolchRootElement> void lock(T element) throws StrolchLockException {
 		this.realm.lock(element);
 		this.lockedElements.add(element);
 	}
 
 	@Override
-	public <T extends StrolchRootElement> void unlock(T element) {
-		this.realm.unlock(element);
+	public <T extends StrolchRootElement> void releaseLock(T element) throws StrolchLockException {
+		this.realm.releaseLock(element);
 		this.lockedElements.remove(element);
 	}
 
-	private void unlockElements() {
+	private void releaseElementLocks() {
 		for (StrolchRootElement lockedElement : this.lockedElements) {
-			this.realm.unlock(lockedElement);
+			this.realm.releaseLock(lockedElement);
 		}
 	}
 
@@ -237,44 +267,48 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 	}
 
 	private void assertQueryAllowed(StrolchQuery query) {
-		PrivilegeContext privilegeContext = this.privilegeHandler.getPrivilegeContext(this.certificate);
-		privilegeContext.validateAction(query);
+		try {
+			PrivilegeContext privilegeContext = this.privilegeHandler.getPrivilegeContext(this.certificate);
+			privilegeContext.validateAction(query);
+		} catch (PrivilegeException e) {
+			throw new StrolchAccessDeniedException(this.certificate, query, e.getMessage(), e);
+		}
 	}
 
 	@Override
 	public List<Order> doQuery(OrderQuery query) {
 		assertQueryAllowed(query);
-		return getPersistenceHandler().getOrderDao(this).doQuery(query, new NoStrategyOrderVisitor());
+		return getOrderMap().doQuery(this, query, new NoStrategyOrderVisitor());
 	}
 
 	@Override
 	public <U> List<U> doQuery(OrderQuery query, OrderVisitor<U> orderVisitor) {
 		assertQueryAllowed(query);
-		return getPersistenceHandler().getOrderDao(this).doQuery(query, orderVisitor);
+		return getOrderMap().doQuery(this, query, orderVisitor);
 	}
 
 	@Override
 	public List<Resource> doQuery(ResourceQuery query) {
 		assertQueryAllowed(query);
-		return getPersistenceHandler().getResourceDao(this).doQuery(query, new NoStrategyResourceVisitor());
+		return getResourceMap().doQuery(this, query, new NoStrategyResourceVisitor());
 	}
 
 	@Override
 	public <U> List<U> doQuery(ResourceQuery query, ResourceVisitor<U> resourceVisitor) {
 		assertQueryAllowed(query);
-		return getPersistenceHandler().getResourceDao(this).doQuery(query, resourceVisitor);
+		return getResourceMap().doQuery(this, query, resourceVisitor);
 	}
 
 	@Override
 	public List<Audit> doQuery(AuditQuery query) {
 		assertQueryAllowed(query);
-		return getPersistenceHandler().getAuditDao(this).doQuery(query, new NoStrategyAuditVisitor());
+		return getAuditTrail().doQuery(this, query, new NoStrategyAuditVisitor());
 	}
 
 	@Override
 	public <U> List<U> doQuery(AuditQuery query, AuditVisitor<U> auditVisitor) {
 		assertQueryAllowed(query);
-		return getPersistenceHandler().getAuditDao(this).doQuery(query, auditVisitor);
+		return getAuditTrail().doQuery(this, query, auditVisitor);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -356,41 +390,113 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 	}
 
 	@Override
-	public Order getOrderBy(StringParameter refP) throws StrolchException {
-		return getOrderMap().getBy(this, refP);
+	public Resource getResourceTemplate(String type) {
+		return getResourceBy(StrolchConstants.TEMPLATE, type);
 	}
 
 	@Override
-	public List<Order> getOrdersBy(StringListParameter refP) throws StrolchException {
-		return getOrderMap().getBy(this, refP);
+	public Resource getResourceTemplate(String type, boolean assertExists) throws StrolchException {
+		return getResourceBy(StrolchConstants.TEMPLATE, type, assertExists);
+	}
+
+	@Override
+	public Order getOrderTemplate(String type) {
+		return getOrderBy(StrolchConstants.TEMPLATE, type);
+	}
+
+	@Override
+	public Order getOrderTemplate(String type, boolean assertExists) throws StrolchException {
+		return getOrderBy(StrolchConstants.TEMPLATE, type, assertExists);
 	}
 
 	@Override
 	public Order getOrderBy(String type, String id) {
-		return getOrderMap().getBy(this, type, id);
+		return getOrderBy(type, id, false);
 	}
 
 	@Override
-	public Resource getResourceBy(StringParameter refP) throws StrolchException {
-		return getResourceMap().getBy(this, refP);
+	public Order getOrderBy(String type, String id, boolean assertExists) throws StrolchException {
+		Order order = getOrderMap().getBy(this, type, id);
+		if (assertExists && order == null) {
+			String msg = "No Order exists with the id {0} with type {1}";
+			throw new StrolchException(MessageFormat.format(msg, id, type));
+		}
+		return order;
 	}
 
 	@Override
-	public List<Resource> getResourcesBy(StringListParameter refP) throws StrolchException {
-		return getResourceMap().getBy(this, refP);
+	public Order getOrderBy(StringParameter refP) throws StrolchException {
+		return getOrderBy(refP, false);
+	}
+
+	@Override
+	public Order getOrderBy(StringParameter refP, boolean assertExists) throws StrolchException {
+		return getOrderMap().getBy(this, refP, assertExists);
+	}
+
+	@Override
+	public List<Order> getOrdersBy(StringListParameter refP) throws StrolchException {
+		return getOrderMap().getBy(this, refP, false);
+	}
+
+	@Override
+	public List<Order> getOrdersBy(StringListParameter refP, boolean assertExists) throws StrolchException {
+		return getOrderMap().getBy(this, refP, assertExists);
 	}
 
 	@Override
 	public Resource getResourceBy(String type, String id) {
-		return getResourceMap().getBy(this, type, id);
+		return getResourceBy(type, id, false);
+	}
+
+	@Override
+	public Resource getResourceBy(String type, String id, boolean assertExists) throws StrolchException {
+		Resource resource = getResourceMap().getBy(this, type, id);
+		if (assertExists && resource == null) {
+			String msg = "No Resource exists with the id {0} with type {1}";
+			throw new StrolchException(MessageFormat.format(msg, id, type));
+		}
+		return resource;
+	}
+
+	@Override
+	public Resource getResourceBy(StringParameter refP) throws StrolchException {
+		return getResourceBy(refP, false);
+	}
+
+	@Override
+	public Resource getResourceBy(StringParameter refP, boolean assertExists) throws StrolchException {
+		return getResourceMap().getBy(this, refP, assertExists);
+	}
+
+	@Override
+	public List<Resource> getResourcesBy(StringListParameter refP) throws StrolchException {
+		return getResourceMap().getBy(this, refP, false);
+	}
+
+	@Override
+	public List<Resource> getResourcesBy(StringListParameter refP, boolean assertExists) throws StrolchException {
+		return getResourceMap().getBy(this, refP, assertExists);
+	}
+
+	@Override
+	public void flush() {
+		try {
+			validateCommands();
+			doCommands();
+			writeChanges(this.txResult);
+		} catch (Exception e) {
+			this.closeStrategy = TransactionCloseStrategy.ROLLBACK;
+
+			String msg = "Strolch Transaction for realm {0} failed due to {1}"; //$NON-NLS-1$
+			msg = MessageFormat.format(msg, getRealmName(), e.getMessage());
+			throw new StrolchTransactionException(msg, e);
+		}
 	}
 
 	@Override
 	public void autoCloseableCommit() {
 		long start = System.nanoTime();
-		if (logger.isDebugEnabled()) {
-			logger.info(MessageFormat.format("Committing TX for realm {0}...", getRealmName())); //$NON-NLS-1$
-		}
 
 		try {
 			this.txResult.setState(TransactionState.COMMITTING);
@@ -406,6 +512,8 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 			commit();
 
 			handleCommit(start, auditTrailDuration, updateObserversDuration);
+
+			this.txResult.setState(TransactionState.COMMITTED);
 
 		} catch (Exception e) {
 			this.txResult.setState(TransactionState.ROLLING_BACK);
@@ -427,12 +535,14 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 				handleFailure(start, e);
 			}
 
+			this.txResult.setState(TransactionState.FAILED);
+
 			String msg = "Strolch Transaction for realm {0} failed due to {1}"; //$NON-NLS-1$
 			msg = MessageFormat.format(msg, getRealmName(), e.getMessage());
-			throw new StrolchPersistenceException(msg, e);
+			throw new StrolchTransactionException(msg, e);
 
 		} finally {
-			unlockElements();
+			releaseElementLocks();
 		}
 	}
 
@@ -441,13 +551,44 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 		long start = System.nanoTime();
 		logger.warn(MessageFormat.format("Rolling back TX for realm {0}...", getRealmName())); //$NON-NLS-1$
 		try {
+			this.txResult.setState(TransactionState.ROLLING_BACK);
 			undoCommands();
 			rollback(this.txResult);
 			handleRollback(start);
+			this.txResult.setState(TransactionState.ROLLED_BACK);
 		} catch (Exception e) {
 			handleFailure(start, e);
+			this.txResult.setState(TransactionState.FAILED);
 		} finally {
-			unlockElements();
+			releaseElementLocks();
+		}
+	}
+
+	@Override
+	public void autoCloseableDoNothing() throws StrolchTransactionException {
+		long start = System.nanoTime();
+		try {
+			this.txResult.setState(TransactionState.CLOSING);
+
+			// TODO re-think this.
+			if (!this.commands.isEmpty()) {
+				logger.error("There are commands registered on a read-only transaction. Changing to rollback! Probably due to an exception!");
+				autoCloseableRollback();
+				return;
+			}
+
+			long auditTrailDuration = writeAuditTrail();
+
+			// rollback and release any resources
+			rollback(this.txResult);
+
+			handleDoNothing(start, auditTrailDuration);
+			this.txResult.setState(TransactionState.CLOSED);
+		} catch (Exception e) {
+			handleFailure(start, e);
+			this.txResult.setState(TransactionState.FAILED);
+		} finally {
+			releaseElementLocks();
 		}
 	}
 
@@ -457,30 +598,80 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 
 	protected abstract void commit() throws Exception;
 
+	private void handleDoNothing(long start, long auditTrailDuration) {
+
+		if (this.suppressDoNothingLogging)
+			return;
+
+		long end = System.nanoTime();
+		long txDuration = end - this.txResult.getStartNanos();
+		long closeDuration = end - start;
+
+		this.txResult.setTxDuration(txDuration);
+		this.txResult.setCloseDuration(closeDuration);
+
+		StringBuilder sb = new StringBuilder();
+		sb.append("TX user=");
+		sb.append(this.certificate.getUsername());
+
+		sb.append(", realm="); //$NON-NLS-1$
+		sb.append(getRealmName());
+
+		sb.append(", took="); //$NON-NLS-1$
+		sb.append(StringHelper.formatNanoDuration(txDuration));
+
+		sb.append(", action=");
+		sb.append(this.action);
+
+		if (closeDuration >= 100000000L) {
+			sb.append(", close="); //$NON-NLS-1$
+			sb.append(StringHelper.formatNanoDuration(closeDuration));
+		}
+
+		if (isAuditTrailEnabled() && auditTrailDuration >= 100000000L) {
+			sb.append(", auditTrail="); //$NON-NLS-1$
+			sb.append(StringHelper.formatNanoDuration(auditTrailDuration));
+		}
+
+		logger.info(sb.toString());
+	}
+
 	private void handleCommit(long start, long auditTrailDuration, long observerUpdateDuration) {
 
 		long end = System.nanoTime();
 		long txDuration = end - this.txResult.getStartNanos();
 		long closeDuration = end - start;
 
-		this.txResult.setState(TransactionState.COMMITTED);
 		this.txResult.setTxDuration(txDuration);
 		this.txResult.setCloseDuration(closeDuration);
 
 		StringBuilder sb = new StringBuilder();
-		sb.append("TX for realm "); //$NON-NLS-1$
+		sb.append("TX user=");
+		sb.append(this.certificate.getUsername());
+
+		sb.append(", realm="); //$NON-NLS-1$
 		sb.append(getRealmName());
-		sb.append(" took "); //$NON-NLS-1$
+
+		sb.append(", took="); //$NON-NLS-1$
 		sb.append(StringHelper.formatNanoDuration(txDuration));
-		sb.append(" close took "); //$NON-NLS-1$
-		sb.append(StringHelper.formatNanoDuration(closeDuration));
-		if (isAuditTrailEnabled()) {
-			sb.append(" auditTrail took "); //$NON-NLS-1$
+
+		sb.append(", action=");
+		sb.append(this.action);
+
+		if (closeDuration >= 100000000L) {
+			sb.append(", close="); //$NON-NLS-1$
+			sb.append(StringHelper.formatNanoDuration(closeDuration));
+		}
+
+		if (isAuditTrailEnabled() && auditTrailDuration >= 100000000L) {
+			sb.append(", auditTrail="); //$NON-NLS-1$
 			sb.append(StringHelper.formatNanoDuration(auditTrailDuration));
 		}
-		if (observerUpdateDuration > 0L)
-			sb.append(" updates took "); //$NON-NLS-1$
-		sb.append(StringHelper.formatNanoDuration(observerUpdateDuration));
+
+		if (isObserverUpdatesEnabled() && observerUpdateDuration >= 100000000L) {
+			sb.append(", updates="); //$NON-NLS-1$
+			sb.append(StringHelper.formatNanoDuration(observerUpdateDuration));
+		}
 		logger.info(sb.toString());
 	}
 
@@ -490,9 +681,27 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 		long txDuration = end - this.txResult.getStartNanos();
 		long closeDuration = end - start;
 
-		this.txResult.setState(TransactionState.ROLLED_BACK);
 		this.txResult.setTxDuration(txDuration);
 		this.txResult.setCloseDuration(closeDuration);
+
+		StringBuilder sb = new StringBuilder();
+		sb.append("TX ROLLBACK user=");
+		sb.append(this.certificate.getUsername());
+
+		sb.append(", realm="); //$NON-NLS-1$
+		sb.append(getRealmName());
+
+		sb.append(" failed="); //$NON-NLS-1$
+		sb.append(StringHelper.formatNanoDuration(txDuration));
+
+		sb.append(", action=");
+		sb.append(this.action);
+
+		if (closeDuration >= 100000000L) {
+			sb.append(", close="); //$NON-NLS-1$
+			sb.append(StringHelper.formatNanoDuration(closeDuration));
+		}
+		logger.error(sb.toString());
 	}
 
 	protected void handleFailure(long closeStartNanos, Exception e) {
@@ -506,17 +715,26 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 		this.txResult.setCloseDuration(closeDuration);
 
 		StringBuilder sb = new StringBuilder();
-		sb.append("TX"); //$NON-NLS-1$
-		sb.append(getRealmName());
-		sb.append(" failed took "); //$NON-NLS-1$
-		sb.append(StringHelper.formatNanoDuration(txDuration));
-		sb.append(" close took "); //$NON-NLS-1$
-		sb.append(StringHelper.formatNanoDuration(closeDuration));
-		logger.info(sb.toString());
+		sb.append("TX FAILED user=");
+		sb.append(this.certificate.getUsername());
 
-		String msg = "Strolch Transaction for realm {0} failed due to {1}"; //$NON-NLS-1$
-		msg = MessageFormat.format(msg, getRealmName(), e.getMessage());
-		throw new StrolchPersistenceException(msg, e);
+		sb.append(", realm="); //$NON-NLS-1$
+		sb.append(getRealmName());
+
+		sb.append(" failed="); //$NON-NLS-1$
+		sb.append(StringHelper.formatNanoDuration(txDuration));
+
+		sb.append(", action=");
+		sb.append(this.action);
+
+		if (closeDuration >= 100000000L) {
+			sb.append(", close="); //$NON-NLS-1$
+			sb.append(StringHelper.formatNanoDuration(closeDuration));
+		}
+
+		String msg = "Strolch Transaction for realm {0} failed due to {1}\n{2}"; //$NON-NLS-1$
+		msg = MessageFormat.format(msg, getRealmName(), e.getMessage(), sb.toString());
+		throw new StrolchTransactionException(msg, e);
 	}
 
 	private boolean isAuditTrailEnabled() {
@@ -604,7 +822,8 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 		}
 	}
 
-	private Audit auditFrom(AccessType accessType, String elementType, String id) {
+	@Override
+	public Audit auditFrom(AccessType accessType, String elementType, String id) {
 		Audit audit = new Audit();
 
 		audit.setId(StrolchAgent.getUniqueIdLong());
@@ -616,7 +835,7 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 		audit.setElementType(elementType);
 		audit.setElementAccessed(id);
 
-		//audit.setNewVersion();
+		// audit.setNewVersion();
 
 		audit.setAction(this.action);
 		audit.setAccessType(accessType);
@@ -639,8 +858,12 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 	 * so chance of a runtime exception should be small
 	 */
 	private void doCommands() {
-		for (Command command : this.commands) {
+		ListIterator<Command> iter = this.commands.listIterator();
+		while (iter.hasNext()) {
+			Command command = iter.next();
 			command.doCommand();
+			this.flushedCommands.add(command);
+			iter.remove();
 		}
 	}
 
@@ -649,8 +872,11 @@ public abstract class AbstractTransaction implements StrolchTransaction {
 	 * performing the commands
 	 */
 	private void undoCommands() {
-		for (Command command : this.commands) {
+		ListIterator<Command> iter = this.flushedCommands.listIterator(this.flushedCommands.size());
+		while (iter.hasPrevious()) {
+			Command command = iter.previous();
 			command.undo();
+			iter.remove();
 		}
 	}
 }

@@ -172,6 +172,12 @@ public class Resource extends GroupedParameterizedElement implements StrolchRoot
 
 		super.fillClone(clone);
 
+		if (this.timedStateMap != null) {
+			for (StrolchTimedState<IValue<?>> timedState : this.timedStateMap.values()) {
+				clone.addTimedState(timedState.getClone());
+			}
+		}
+
 		return clone;
 	}
 
@@ -195,6 +201,11 @@ public class Resource extends GroupedParameterizedElement implements StrolchRoot
 	@Override
 	public Resource getRootElement() {
 		return this;
+	}
+	
+	@Override
+	public boolean isRootElement() {
+		return true;
 	}
 
 	@Override

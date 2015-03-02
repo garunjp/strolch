@@ -15,11 +15,16 @@
  */
 package li.strolch.rest;
 
+import java.text.MessageFormat;
+
 import li.strolch.agent.api.ComponentContainer;
 import li.strolch.agent.api.StrolchComponent;
 import li.strolch.rest.filters.AccessControlResponseFilter;
+import li.strolch.rest.filters.HttpCacheResponseFilter;
 import li.strolch.runtime.configuration.ComponentConfiguration;
-import li.strolch.runtime.privilege.PrivilegeHandler;
+
+import org.glassfish.jersey.server.ServerProperties;
+
 import ch.eitchnet.utils.dbc.DBC;
 
 /**
@@ -29,7 +34,44 @@ public class RestfulStrolchComponent extends StrolchComponent {
 
 	private static final String PARAM_CORS_ENABLED = "corsEnabled"; //$NON-NLS-1$
 	private static final String PARAM_CORS_ORIGIN = "corsOrigin"; //$NON-NLS-1$
+	private static final String PARAM_REST_LOGGING = "restLogging"; //$NON-NLS-1$
+	private static final String PARAM_REST_LOGGING_ENTITY = "restLoggingEntity"; //$NON-NLS-1$
+	private static final String PARAM_HTTP_CACHE_MODE = "httpCacheMode"; //$NON-NLS-1$
+
+	/**
+	 * Allowed values:
+	 * <ul>
+	 * <li>{@code OFF} - tracing support is disabled.</li>
+	 * <li>{@code ON_DEMAND} - tracing support is in 'stand by' mode, it is enabled on demand by existence of request
+	 * HTTP header</li>
+	 * <li>{@code ALL} - tracing support is enabled for every request.</li>
+	 * </ul>
+	 * 
+	 * @see ServerProperties#TRACING
+	 */
+	private static final String PARAM_REST_TRACING = "restTracing"; //$NON-NLS-1$
+
+	/**
+	 * Allowed values:
+	 * <ul>
+	 * <li>{@code SUMMARY}</li>
+	 * <li>{@code TRACE}</li>
+	 * <li>{@code VERBOSE}</li>
+	 * </ul>
+	 * 
+	 * @see ServerProperties#TRACING_THRESHOLD
+	 */
+	private static final String PARAM_REST_TRACING_THRESHOLD = "restTracingThreshold"; //$NON-NLS-1$
+
 	private static RestfulStrolchComponent instance;
+
+	private String restTracing;
+	private String restTracingThreshold;
+	private boolean corsEnabled;
+	private String corsOrigin;
+	private boolean restLogging;
+	private boolean restLoggingEntity;
+	private String cacheMode;
 
 	/**
 	 * @param container
@@ -39,15 +81,72 @@ public class RestfulStrolchComponent extends StrolchComponent {
 		super(container, componentName);
 	}
 
+	/**
+	 * @return the corsEnabled
+	 */
+	public boolean isCorsEnabled() {
+		return this.corsEnabled;
+	}
+
+	/**
+	 * @return the origin
+	 */
+	public String getCorsOrigin() {
+		return this.corsOrigin;
+	}
+
+	/**
+	 * @return the restTracing
+	 */
+	public String getRestTracing() {
+		return this.restTracing;
+	}
+
+	/**
+	 * @return the restTracingThreshold
+	 */
+	public String getRestTracingThreshold() {
+		return this.restTracingThreshold;
+	}
+
+	/**
+	 * @return the restLogging
+	 */
+	public boolean isRestLogging() {
+		return this.restLogging;
+	}
+
+	/**
+	 * @return the restLoggingEntity
+	 */
+	public boolean isRestLoggingEntity() {
+		return this.restLoggingEntity;
+	}
+
 	@Override
 	public void initialize(ComponentConfiguration configuration) {
 
-		if (configuration.getBoolean(PARAM_CORS_ENABLED, Boolean.FALSE)) {
-			String origin = configuration.getString(PARAM_CORS_ORIGIN, null);
-			logger.info("Enabling CORS for origin: " + origin); //$NON-NLS-1$
+		this.corsEnabled = configuration.getBoolean(PARAM_CORS_ENABLED, Boolean.FALSE);
+		if (this.corsEnabled) {
+			this.corsOrigin = configuration.getString(PARAM_CORS_ORIGIN, null);
+			logger.info("Enabling CORS for origin: " + this.corsOrigin); //$NON-NLS-1$
 			AccessControlResponseFilter.setCorsEnabled(true);
-			AccessControlResponseFilter.setOrigin(origin);
+			AccessControlResponseFilter.setOrigin(this.corsOrigin);
 		}
+
+		// restful logging and tracing
+		this.restLogging = configuration.getBoolean(PARAM_REST_LOGGING, Boolean.FALSE);
+		this.restLoggingEntity = configuration.getBoolean(PARAM_REST_LOGGING_ENTITY, Boolean.FALSE);
+		this.restTracing = configuration.getString(PARAM_REST_TRACING, "OFF"); //$NON-NLS-1$
+		this.restTracingThreshold = configuration.getString(PARAM_REST_TRACING_THRESHOLD, "TRACE"); //$NON-NLS-1$
+
+		String msg = "Set restLogging={0} with logEntities={1} restTracing={2} with threshold={3}"; //$NON-NLS-1$
+		logger.info(MessageFormat.format(msg, this.restLogging, this.restLoggingEntity, this.restTracing,
+				this.restTracingThreshold));
+		
+		// set http cache mode
+		this.cacheMode = configuration.getString(PARAM_HTTP_CACHE_MODE, HttpCacheResponseFilter.NO_CACHE);
+		logger.info("HTTP header cache mode is set to {}",cacheMode);
 
 		super.initialize(configuration);
 	}
@@ -82,7 +181,7 @@ public class RestfulStrolchComponent extends StrolchComponent {
 		return getContainer().getComponent(clazz);
 	}
 
-	public PrivilegeHandler getPrivilegeHandler() {
-		return getContainer().getPrivilegeHandler();
+	public StrolchSessionHandler getSessionHandler() {
+		return getContainer().getComponent(StrolchSessionHandler.class);
 	}
 }
